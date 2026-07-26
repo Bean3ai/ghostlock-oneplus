@@ -22,13 +22,13 @@ The `pselect6` syscall copies `fd_set` data onto the kernel stack. When combined
 |--------|-----|--------|--------|
 | OnePlus Ace 6T (PLR110) | SM8845 | `6.12.38-...-ab14275539` | **Working** |
 | OnePlus Ace 6T (PLR110) | SM8845 | `6.12.38-...-ab14552068` | **Working** |
+| OnePlus 15 (CPH2749) | SM8850 | `6.12.23-...-ab14541642` | **Working** |
 
 ### Offsets Extracted (pending device test)
 
 | Device | SoC | Kernel | Notes |
 |--------|-----|--------|-------|
 | OnePlus 15T (PLZ110) | SM8845 | `6.12.38-...-ab14552068` | Same kernel as Ace 6T. QEMU verified SP diff=-64. |
-| OnePlus 15 (OP615) | SM8845 | `6.12.23-...-ab14541642` | Offsets from OTA boot.img |
 | OnePlus 13 (IN2060) | SM8750 | `6.6.89-...-abogki446052083` | QEMU verified SP diff=-64. Use `PSELECT_SHIFT=-2`. |
 
 ### Not Feasible (stack layout incompatible)
@@ -70,16 +70,54 @@ RMX5070 ❌ (waiter at word 13):
 
 The waiter position is determined by the compiler's stack frame layout (PGO + LTO + BOLT optimization profiles), which varies per SoC branch. Same kernel version can have different layouts on different SoCs.
 
+### kernel_phys_load
+
+All kernel writes go through the image's linear-map alias:
+
+```
+data_addr(x) = PAGE_OFFSET + (kernel_phys_load - PHYS_OFFSET) + (x - KIMAGE_TEXT_BASE)
+```
+
+The bootloader picks `kernel_phys_load`, so it varies per SoC and is not in
+boot.img or the DT. Per-device field in `struct kernel_offsets`; 0 = use the
+`target.h` default.
+
+| SoC | kernel_phys_load |
+|-----|------------------|
+| SM8845 (Ace 6T) | `0xa8000000` |
+| SM8850 (OnePlus 15) | `0xc7800000` |
+
+**A wrong value fails silently** — the write still lands in mapped RAM, so
+there is no crash and no effect. Don't mistake it for a `PSELECT_SHIFT`
+problem. Read it on a rooted unit of the same model (`Kernel code` starts at
+`_stext`; `_text` is `0x10000` lower):
+
+```bash
+su -c 'grep -i "Kernel code" /proc/iomem'   # c7810000-... -> 0xc7800000
+```
+
 ### PSELECT_SHIFT
 
 Different kernels place the waiter at different positions within the controllable zone. Use `PSELECT_SHIFT` to adjust:
 
 ```bash
-# Default (Ace 6T, 6.12): shift=0
+# Default (Ace 6T + OnePlus 15, 6.12): shift=0
 /data/local/tmp/a/e
 
 # OnePlus 13 (6.6): shift=-2
 PSELECT_SHIFT=-2 /data/local/tmp/a/e
+```
+
+`check_feasibility.py`'s waiter word is unreliable: its frame arithmetic is
+right, but the struct offsets it infers from zero-stores are not (on OnePlus 15
+it gives word 3; measured is word 2). A wrong shift costs a kernel panic per
+guess, so measure it on a rooted unit instead:
+
+```bash
+echo 'p:ds do_select fdsin=+0(%x1)' >> /sys/kernel/tracing/kprobe_events
+echo 'p:rw rt_mutex_wait_proxy_lock waiter=%x2' >> /sys/kernel/tracing/kprobe_events
+# trigger FUTEX_CMP_REQUEUE_PI, then:
+#   PSELECT_SHIFT = ((waiter & 0x3fff) - (fdsin & 0x3fff)) / 8 - 2
 ```
 
 ## Exploit Flow

