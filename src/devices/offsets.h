@@ -5,6 +5,13 @@
 
 struct kernel_offsets {
   const char *uname_r;
+  /* Physical load address of the kernel image, chosen by the bootloader.
+   * Varies per SoC/board and is not derivable from boot.img — read it from
+   * "Kernel code" in /proc/iomem on a rooted unit of the same model
+   * (subtract _stext-_text, normally 0x10000). 0 = fall back to
+   * P0_KERNEL_PHYS_LOAD from target.h. Wrong value => every write lands in
+   * unrelated RAM: no crash, no effect, very hard to debug. */
+  uint64_t kernel_phys_load;
   uint64_t off_init_task, off_init_cred, off_init_uts_ns, off_empty_zero_page;
   uint64_t off_root_task_group, off_selinux_enforcing, off_kptr_restrict;
   uint64_t off_selinux_blob_sizes, off_security_hook_heads, off_kmalloc_caches;
