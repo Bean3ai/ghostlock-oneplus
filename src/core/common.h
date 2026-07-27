@@ -371,6 +371,8 @@ void disable_rseq_for_thread(void);
 void init_p0_profile(void);
 extern uint64_t p0_kernel_phys_load;
 extern uintptr_t g_init_cred_image;
+struct kernel_offsets;
+extern const struct kernel_offsets *active_offsets;
 int env_flag(const char *name, int def);
 int env_int_range(const char *name, int def, int min, int max);
 long futex_op(

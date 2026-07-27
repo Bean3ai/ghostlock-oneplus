@@ -1,4 +1,5 @@
 #include "common.h"
+#include "runtime_struct_offsets.h"
 #include "kernelsnitch/kernelsnitch.h"
 
 static struct kernelsnitch_shared_state *ks;

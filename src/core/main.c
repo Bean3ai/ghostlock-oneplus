@@ -15,7 +15,7 @@
 #include <arpa/inet.h>
 #include <sys/utsname.h>
 
-static const struct kernel_offsets *active_offsets = NULL;
+const struct kernel_offsets *active_offsets = NULL;
 
 /* Override target.h _OFF macros with dynamic offsets from offsets.h table */
 #undef SELINUX_ENFORCING_OFF
@@ -75,6 +75,9 @@ static const struct kernel_offsets *active_offsets = NULL;
 #define SLIDE_LOGGERS_0_1_OFF         active_offsets->off_slide_loggers_0_1
 #define SLIDE_RANDOM_BOOT_ID_DATA_OFF active_offsets->off_slide_boot_id
 #define SLIDE_SYSCTL_BOOTID_OFF       active_offsets->off_slide_boot_id
+
+/* Override struct field offsets (task_struct, etc.) with per-device values */
+#include "runtime_struct_offsets.h"
 
 static int select_offsets(void) {
   struct utsname uts;

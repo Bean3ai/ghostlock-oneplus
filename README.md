@@ -29,18 +29,21 @@ The `pselect6` syscall copies `fd_set` data onto the kernel stack. When combined
 | Device | SoC | Kernel | Notes |
 |--------|-----|--------|-------|
 | OnePlus 15T (PLZ110) | SM8845 | `6.12.38-...-ab14552068` | Same kernel as Ace 6T. QEMU verified SP diff=-64. |
-| OnePlus 13 (IN2060) | SM8750 | `6.6.89-...-abogki446052083` | QEMU verified SP diff=-64. Use `PSELECT_SHIFT=-2`. |
+| OnePlus 13 (IN2060) | SM8750 | `6.6.89-...-abogki446052083` | Kernel 6.6: uses `STRUCT_OFFSETS_6_6`. SP diff=-64. Use `PSELECT_SHIFT=-2`. |
 
 ### Not Feasible (stack layout incompatible)
 
 The pselect stack overlay only works when the freed `rt_mutex_waiter` lands within the user-controllable region of the `stack_fds` buffer. Where the waiter lands is determined by the compiler output (PGO + LTO), not the kernel version. See [Stack Layout](#stack-layout-feasibility) for details.
 
-| Device | SoC | Kernel | Waiter Word | Reason |
-|--------|-----|--------|-------------|--------|
-| OPPO Find X9 Ultra | SM8750 | 6.12.58 | 14 | task/lock in zeroed area |
-| realme RMX5070 | SM6650 | 6.1.141 | 13 | task/lock in zeroed area |
-| realme RMX3852 | SM8635 | 6.1.141 | 13 | Same branch as RMX5070 |
-| OPPO Pad 5 (OPD2502) | MT6878 | 6.1.134 | 13 | Same branch as RMX5070 |
+| Device | SoC | Kernel | Reason |
+|--------|-----|--------|--------|
+| OPPO Find X9 Ultra | SM8750 | 6.12.58 | SHIFT=-8: rb_tree fields land on `fds` struct pointers (non-zero), `alloc_size` optimized into register by clang 19. No safe shift exists. |
+| OPPO Find X7 | — | 6.1.157 | 6.1 compiler output: waiter at word 13 |
+| realme RMX5070 | SM6650 | 6.1.141 | 6.1 compiler output: waiter at word 13 |
+| realme RMX3852 | SM8635 | 6.1.141 | Same 6.1 branch as RMX5070 |
+| OnePlus 13R / Ace 5 | SM8635 | 6.1.x | Same 6.1 branch |
+| OPPO Pad 5 (OPD2502) | MT6878 | 6.1.134 | Same 6.1 branch |
+| iQOO Z9 5G | — | 5.15.178 | kernel 5.15 uses `plist_node` (not `rb_node`), incompatible waiter struct. Also not an OPLUS device (vivo). |
 
 ## Stack Layout Feasibility
 
@@ -84,7 +87,8 @@ boot.img or the DT. Per-device field in `struct kernel_offsets`; 0 = use the
 
 | SoC | kernel_phys_load |
 |-----|------------------|
-| SM8845 (Ace 6T) | `0xa8000000` |
+| SM8845 (Ace 6T, 15T) | `0xa8000000` |
+| SM8750 (OnePlus 13) | `0xa8000000` |
 | SM8850 (OnePlus 15) | `0xc7800000` |
 
 **A wrong value fails silently** — the write still lands in mapped RAM, so
@@ -242,12 +246,13 @@ The core exploit is device-agnostic. Adaptation may require:
 | `src/core/util.c` | Heap spray, kernelsnitch, slab drain |
 | `src/core/miniadb.c` | Mini ADB client (TCP + RSA auth) |
 | `src/core/common.h` | Timing parameters, macros |
-| `src/core/target.h` | Memory layout, struct field constants |
-| `src/devices/offsets.h` | Aggregates all device offset tables |
+| `src/core/target.h` | Memory layout, struct field defaults (6.12) |
+| `src/core/runtime_struct_offsets.h` | Per-device struct field override (6.6 vs 6.12) |
+| `src/devices/offsets.h` | Aggregates all device offset tables + `STRUCT_OFFSETS_*` macros |
 | `src/devices/<device>/offsets.h` | Per-device kernel offset entries |
-| `src/slide.c` | SLIDE kernel address leak |
-| `src/pipe.c` | Pipe buffer manipulation |
-| `src/root.c` | Root shell setup |
+| `src/core/slide.c` | SLIDE kernel address leak |
+| `src/core/pipe.c` | Pipe buffer manipulation |
+| `src/core/root.c` | Root shell setup |
 | `tools/extract_target.py` | Offset extraction from kallsyms |
 | `tools/extract_btf.py` | Struct offset extraction from BTF |
 | `tools/check_feasibility.py` | Stack layout feasibility checker |

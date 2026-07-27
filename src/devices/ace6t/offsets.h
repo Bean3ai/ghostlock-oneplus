@@ -1,7 +1,7 @@
 /* OnePlus Ace 6T (PLR110) — SM8845 / Snapdragon 8s Elite */
 
 OFFSETS_ENTRY("6.12.38-android16-5-g8c67d4274c0a-ab14275539-4k",  /* PLR110_16.0.2.403 */
-  .kernel_phys_load=0xa8000000, .off_init_task=0x0240CF00, .off_init_cred=0x02422C70, .off_init_uts_ns=0x02594D88,
+  .kernel_phys_load=0xa8000000, STRUCT_OFFSETS_6_12, .off_init_task=0x0240CF00, .off_init_cred=0x02422C70, .off_init_uts_ns=0x02594D88,
   .off_empty_zero_page=0x02635000, .off_root_task_group=0x0263D580,
   .off_selinux_enforcing=0x026894D0, .off_kptr_restrict=0x0240B638,
   .off_selinux_blob_sizes=0x018464E8, .off_security_hook_heads=0x01846480,
@@ -17,7 +17,7 @@ OFFSETS_ENTRY("6.12.38-android16-5-g8c67d4274c0a-ab14275539-4k",  /* PLR110_16.0
   .off_slide_boot_id=0x026AA868,
 ),
 OFFSETS_ENTRY("6.12.38-android16-5-g844001fb8721-ab14552068-4k",  /* PLR110_16.0.8.301 */
-  .kernel_phys_load=0xa8000000, .off_init_task=0x0240CF00, .off_init_cred=0x02422C70, .off_init_uts_ns=0x02594DC8,
+  .kernel_phys_load=0xa8000000, STRUCT_OFFSETS_6_12, .off_init_task=0x0240CF00, .off_init_cred=0x02422C70, .off_init_uts_ns=0x02594DC8,
   .off_empty_zero_page=0x02635000, .off_root_task_group=0x0263D580,
   .off_selinux_enforcing=0x026894D0, .off_kptr_restrict=0x0240B638,
   .off_selinux_blob_sizes=0x018494E8, .off_security_hook_heads=0,
