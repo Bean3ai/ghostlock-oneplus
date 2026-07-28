@@ -161,7 +161,7 @@ def main():
 
     # Load current target.h
     current = {}
-    target_h = "C:/Users/Lxns/Downloads/ghostlock_ace6t_full (1)/exploit/src/targets/ace6t/target.h"
+    target_h = os.path.join(os.path.dirname(__file__), "..", "src", "core", "target.h")
     if os.path.exists(target_h):
         with open(target_h, encoding='utf-8') as f:
             for line in f:

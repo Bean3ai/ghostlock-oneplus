@@ -216,7 +216,7 @@ def main():
     results = compute_offsets(symbols, kimage_base)
 
     # Read current target.h for comparison
-    target_h = "C:/Users/Lxns/Downloads/ghostlock_ace6t_full (1)/exploit/src/targets/ace6t/target.h"
+    target_h = os.path.join(os.path.dirname(__file__), "..", "src", "core", "target.h")
     current = {}
     if os.path.exists(target_h):
         with open(target_h, encoding='utf-8') as f:
