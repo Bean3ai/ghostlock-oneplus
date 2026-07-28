@@ -29,7 +29,7 @@ The `pselect6` syscall copies `fd_set` data onto the kernel stack. When combined
 | Device | SoC | Kernel | Notes |
 |--------|-----|--------|-------|
 | OnePlus 15T (PLZ110) | SM8845 | `6.12.38-...-ab14552068` | Same kernel as Ace 6T. QEMU verified SP diff=-64. |
-| OnePlus 13 (IN2060) | SM8750 | `6.6.89-...-abogki446052083` | Kernel 6.6: uses `STRUCT_OFFSETS_6_6`. SP diff=-64. Use `PSELECT_SHIFT=-2`. |
+| OnePlus 13 (IN2060) | SM8750 | `6.6.89-...-abogki446052083` | Kernel 6.6: uses `STRUCT_OFFSETS_6_6`. SP diff=-64. Use `PSELECT_SHIFT=-2`. UMH root available (C ashmem). |
 
 ### Not Feasible (stack layout incompatible)
 
@@ -44,6 +44,65 @@ The pselect stack overlay only works when the freed `rt_mutex_waiter` lands with
 | OnePlus 13R / Ace 5 | SM8635 | 6.1.x | Same 6.1 branch |
 | OPPO Pad 5 (OPD2502) | MT6878 | 6.1.134 | Same 6.1 branch |
 | iQOO Z9 5G | — | 5.15.178 | kernel 5.15 uses `plist_node` (not `rb_node`), incompatible waiter struct. Also not an OPLUS device (vivo). |
+
+## Exploit Flow
+
+Two root paths, selected automatically based on device capabilities:
+
+### Path A: UMH Root (preferred, C ashmem devices)
+
+Requires `off_ashmem_misc_fops != 0` (C ashmem with static miscdevice in BSS).
+
+```
+PI write (mode=4)  →  redirect miscdevice fops to fake fops (via W0 pi_tree)
+                      configfs r/w established
+                   →  pipe physrw (1-byte precise kernel r/w)
+                   →  SELinux enforcing = 0 (single byte, no policycap corruption)
+                   →  UMH: inject work_struct into system_unbound_wq
+                      kernel executes /data/local/tmp/a/e --umh as UID 0
+                   →  root script → ksud late-load → KSU installed
+```
+
+Advantages over Path B:
+- **1-byte SELinux write** — does not corrupt `selinux_state.policycap` (fixes network issues on OnePlus 13)
+- **No perf_event_open** — works under seccomp restrictions
+- **No credential patching** — avoids modifying live task_struct
+
+Currently available on: **OnePlus 13** (kernel 6.6, C ashmem).
+Not available on Rust ashmem devices (6.12 GKI) — the miscdevice is heap-allocated, address not predictable at compile time.
+
+### Path B: Direct PI Write (fallback, all devices)
+
+Used when UMH offsets or C ashmem misc_fops are not available.
+
+```
+Write 1 (mode=1)  →  SELinux enforcing = 0
+                      (low byte of kernel ptr = 0x00, 8-byte write)
+
+Write 2 (mode=2)  →  task->cred = init_cred
+                      (uid=0, all capabilities)
+
+Root shell         →  ksud late-load (KernelSU LKM)
+                   →  su -c load_policy (fix SELinux policycap)
+                   →  dynamic manager registration
+```
+
+### Bootstrap Mode (phone standalone)
+
+```
+App (seccomp)  →  Write 1 (no perf needed)
+               →  mini-adb connect TCP (port from /data/local/tmp/a/adb_port, default 5555)
+               →  adb shell: full exploit (perf works, no seccomp)
+               →  root → KSU → network fix
+```
+
+### Auto-Boot (via ReSukiSU integration)
+
+```
+BOOT_COMPLETED → BootCompletedReceiver
+  ├─ su available → skip (soft reboot / already rooted)
+  └─ no root → GhostlockService → setsid exploit --bootstrap
+```
 
 ## Stack Layout Feasibility
 
@@ -127,37 +186,6 @@ echo 'p:rw rt_mutex_wait_proxy_lock waiter=%x2' >> /sys/kernel/tracing/kprobe_ev
 #   PSELECT_SHIFT = ((waiter & 0x3fff) - (fdsin & 0x3fff)) / 8 - 2
 ```
 
-## Exploit Flow
-
-```
-Write 1 (mode=1)  →  SELinux enforcing = 0
-                      (low byte of kernel ptr = 0x00)
-
-Write 2 (mode=2)  →  task->cred = init_cred
-                      (uid=0, all capabilities)
-
-Root shell         →  ksud late-load (KernelSU LKM)
-                   →  su -c load_policy (fix SELinux policycap)
-                   →  dynamic manager registration
-```
-
-### Bootstrap Mode (phone standalone)
-
-```
-App (seccomp)  →  Write 1 (no perf needed)
-               →  mini-adb connect TCP (port from /data/local/tmp/a/adb_port, default 5555)
-               →  adb shell: full exploit (perf works, no seccomp)
-               →  root → KSU → network fix
-```
-
-### Auto-Boot (via ReSukiSU integration)
-
-```
-BOOT_COMPLETED → BootCompletedReceiver
-  ├─ su available → skip (soft reboot / already rooted)
-  └─ no root → GhostlockService → setsid exploit --bootstrap
-```
-
 ## Build
 
 ```bash
@@ -165,8 +193,8 @@ NDK=/path/to/android-ndk
 $NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android35-clang \
   -O2 -Wall -Isrc/core -Isrc/devices -DTARGET_CONFIG_H="target.h" \
   src/core/main.c src/core/util.c src/core/slide.c \
-  src/core/fops.c src/core/pipe.c src/core/root.c \
-  src/core/miniadb.c \
+  src/core/fops.c src/core/pipe_physrw.c src/core/root.c \
+  src/core/miniadb.c src/core/umh_root.c \
   -o ghostlock -fPIE -pie -pthread
 ```
 
@@ -244,17 +272,26 @@ The core exploit is device-agnostic. Adaptation may require:
 - Different `VA_BITS` (48 vs 39) → update `target.h` memory layout
 - Different `kernel_phys_load` → read from `/proc/iomem` or use `KPHYS=` env var
 - Different timing parameters → tune `common.h`
-- Different ashmem implementation (C vs Rust) → find fops table by function pointer pattern match
+- Different ashmem implementation (C vs Rust) → C ashmem enables UMH path; Rust ashmem falls back to W1+W2
 - Different `PSELECT_SHIFT` → determine via QEMU kprobe test
 - Different struct offsets (6.6 vs 6.12) → use `STRUCT_OFFSETS_6_6` or `STRUCT_OFFSETS_6_12` in device entry
+
+### UMH root requirements
+
+The UMH (call_usermodehelper) root path requires:
+- `off_system_unbound_wq` and `off_call_usermodehelper_exec_work` from kallsyms
+- `off_ashmem_misc_fops` = `ashmem_misc + 0x10` (C ashmem only, miscdevice.fops in BSS)
+- Rust ashmem (GKI 6.12) allocates miscdevice on the heap → address not predictable → UMH unavailable
 
 ## Files
 
 | File | Description |
 |------|-------------|
-| `src/core/main.c` | Exploit entry, Write 1/2, bootstrap, root script |
-| `src/core/fops.c` | pselect route, PI write mechanism |
-| `src/core/util.c` | Heap spray, kernelsnitch, slab drain |
+| `src/core/main.c` | Exploit entry, Write 1/2, UMH path, bootstrap, root script |
+| `src/core/fops.c` | pselect route, PI write mechanism, CFI stage |
+| `src/core/util.c` | Heap spray, kernelsnitch, slab drain, payload setup |
+| `src/core/pipe_physrw.c` | Pipe buffer-based physical memory r/w (upgrades configfs r/w) |
+| `src/core/umh_root.c` | UMH root via workqueue injection + `--umh` handler |
 | `src/core/miniadb.c` | Mini ADB client (TCP + RSA auth) |
 | `src/core/common.h` | Timing parameters, macros |
 | `src/core/target.h` | Memory layout, struct field defaults (6.12) |
@@ -262,8 +299,7 @@ The core exploit is device-agnostic. Adaptation may require:
 | `src/devices/offsets.h` | Aggregates all device offset tables + `STRUCT_OFFSETS_*` macros |
 | `src/devices/<device>/offsets.h` | Per-device kernel offset entries |
 | `src/core/slide.c` | SLIDE kernel address leak |
-| `src/core/pipe.c` | Pipe buffer manipulation |
-| `src/core/root.c` | Root shell setup |
+| `src/core/root.c` | Root shell setup (direct cred patching via pipe physrw) |
 | `tools/extract_target.py` | Offset extraction from kallsyms |
 | `tools/extract_btf.py` | Struct offset extraction from BTF |
 | `tools/check_feasibility.py` | Stack layout feasibility checker |

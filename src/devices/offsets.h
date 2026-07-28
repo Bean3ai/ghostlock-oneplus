@@ -22,6 +22,10 @@ struct kernel_offsets {
   uint64_t off_copy_splice_read, off_noop_llseek, off_cap_capable_active;
   uint64_t off_slide_nfulnl_logger, off_slide_loggers_0_1, off_slide_boot_id;
 
+  /* UMH root: workqueue symbol offsets (0 = not available for this kernel) */
+  uint64_t off_system_unbound_wq;
+  uint64_t off_call_usermodehelper_exec_work;
+
   /* Per-kernel-version struct field offsets. 0 = use target.h default (6.12). */
   uint32_t task_prio, task_normal_prio, task_sched_task_group;
   uint32_t task_pi_lock, task_pi_waiters, task_pi_top_task, task_pi_blocked_on;

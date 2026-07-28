@@ -501,6 +501,8 @@ uint64_t pipe_read64(int fd, uintptr_t direct_addr);
 uint32_t pipe_read32(int fd, uintptr_t direct_addr);
 int pipe_write64(int fd, uintptr_t direct_addr, uint64_t value);
 int install_pipe_physrw(int fd);
+int install_umh_root(int fd);
+void handle_umh_mode(int argc, char **argv);
 void print_uname_line(const char *tag);
 int run_tmp_page_uname_stage(void);
 

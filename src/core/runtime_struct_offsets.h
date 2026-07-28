@@ -6,6 +6,12 @@
 extern const struct kernel_offsets *active_offsets;
 
 #define _RSO(field, fallback) (active_offsets && active_offsets->field ? active_offsets->field : (fallback))
+#define _RSO_64(field, fallback) ((uint64_t)(active_offsets && active_offsets->field ? active_offsets->field : (fallback)))
+
+#undef SYSTEM_UNBOUND_WQ_OFF
+#undef CALL_USERMODEHELPER_EXEC_WORK_OFF
+#define SYSTEM_UNBOUND_WQ_OFF            _RSO_64(off_system_unbound_wq, 0)
+#define CALL_USERMODEHELPER_EXEC_WORK_OFF _RSO_64(off_call_usermodehelper_exec_work, 0)
 
 #undef FAKE_TASK_PRIO_OFF
 #undef FAKE_TASK_NORMAL_PRIO_OFF
