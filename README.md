@@ -37,7 +37,7 @@ The pselect stack overlay only works when the freed `rt_mutex_waiter` lands with
 
 | Device | SoC | Kernel | Reason |
 |--------|-----|--------|--------|
-| OPPO Find X9 Ultra | SM8750 | 6.12.58 | SHIFT=-8: rb_tree fields land on `fds` struct pointers (non-zero), `alloc_size` optimized into register by clang 19. No safe shift exists. |
+| OPPO Find X9 Ultra | SM8750 | 6.12.58 | SP diff=+32 (vs -64 on Ace 6T). Intermediate caller frame sizes differ due to PGO profiles. SHIFT=-8 required but rb_tree fields land on non-zero `fds` pointers. No safe shift exists. |
 | OPPO Find X7 | — | 6.1.157 | 6.1 compiler output: waiter at word 13 |
 | realme RMX5070 | SM6650 | 6.1.141 | 6.1 compiler output: waiter at word 13 |
 | realme RMX3852 | SM8635 | 6.1.141 | Same 6.1 branch as RMX5070 |
@@ -110,6 +110,9 @@ Different kernels place the waiter at different positions within the controllabl
 
 # OnePlus 13 (6.6): shift=-2
 PSELECT_SHIFT=-2 /data/local/tmp/a/e
+
+# Override kernel_phys_load for new SoCs (when /proc/iomem is not accessible):
+KPHYS=0xc7800000 /data/local/tmp/a/e
 ```
 
 `check_feasibility.py`'s waiter word is unreliable: its frame arithmetic is
@@ -142,7 +145,7 @@ Root shell         →  ksud late-load (KernelSU LKM)
 
 ```
 App (seccomp)  →  Write 1 (no perf needed)
-               →  mini-adb connect TCP 5555 (RSA auth)
+               →  mini-adb connect TCP (port from /data/local/tmp/a/adb_port, default 5555)
                →  adb shell: full exploit (perf works, no seccomp)
                →  root → KSU → network fix
 ```
@@ -183,12 +186,18 @@ GhostLock only provides root. KernelSU installation depends on **ksud** — a bi
 ## Setup (one-time)
 
 ```bash
+# Enable ADB TCP (use any port)
 adb tcpip 5555
+
+# Push exploit binary and ADB key
+adb push ghostlock /data/local/tmp/a/e && adb shell chmod 755 /data/local/tmp/a/e
 adb push ~/.android/adbkey /data/local/tmp/a/adbkey
-adb push ghostlock /data/local/tmp/a/e && chmod 755 /data/local/tmp/a/e
+
+# If using a non-default ADB port (e.g. 23946):
+adb shell "echo 23946 > /data/local/tmp/a/adb_port"
 ```
 
-After first successful jailbreak, `persist.adb.tcp.port=5555` is set via `resetprop` — subsequent boots are fully automatic.
+After first successful jailbreak, `persist.adb.tcp.port` is set via `resetprop` — subsequent boots are fully automatic.
 
 ## Usage
 
@@ -233,9 +242,11 @@ python tools/extract_btf.py kernel  # 57 offsets, auto-validated
 
 The core exploit is device-agnostic. Adaptation may require:
 - Different `VA_BITS` (48 vs 39) → update `target.h` memory layout
+- Different `kernel_phys_load` → read from `/proc/iomem` or use `KPHYS=` env var
 - Different timing parameters → tune `common.h`
-- Different ashmem implementation (C vs Rust) → update symbol matching
+- Different ashmem implementation (C vs Rust) → find fops table by function pointer pattern match
 - Different `PSELECT_SHIFT` → determine via QEMU kprobe test
+- Different struct offsets (6.6 vs 6.12) → use `STRUCT_OFFSETS_6_6` or `STRUCT_OFFSETS_6_12` in device entry
 
 ## Files
 
